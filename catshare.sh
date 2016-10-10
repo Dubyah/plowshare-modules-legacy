@@ -1,5 +1,5 @@
 # Plowshare catshare.net module
-# Copyright (c) 2015 Raziel-23
+# Copyright (c) 2016 Plowshare team
 #
 # This file is part of Plowshare.
 #
@@ -16,26 +16,27 @@
 # You should have received a copy of the GNU General Public License
 # along with Plowshare.  If not, see <http://www.gnu.org/licenses/>.
 
-MODULE_CATSHARE_REGEXP_URL='https\?://catshare\.net/'
+MODULE_CATSHARE_REGEXP_URL='https\?://\([[:alnum:]]\+\.\)\?catshare\.\(net\|xup\.pl\)/'
 
 MODULE_CATSHARE_DOWNLOAD_OPTIONS="
 AUTH,a,auth,a=USER:PASSWORD,User account"
 MODULE_CATSHARE_DOWNLOAD_RESUME=no
-MODULE_CATSHARE_DOWNLOAD_FINAL_LINK_NEEDS_COOKIE=yes
+MODULE_CATSHARE_DOWNLOAD_FINAL_LINK_NEEDS_COOKIE=no
 MODULE_CATSHARE_DOWNLOAD_SUCCESSIVE_INTERVAL=
 
 MODULE_CATSHARE_PROBE_OPTIONS=""
 
-# Static function. Proceed with login (free)
+# Static function. Proceed with login
 # $1: authentication
 # $2: cookie file
 # $3: base URL
+# stdout: account type ("free" or "premium") on success
 catshare_login() {
     local -r AUTH=$1
     local -r COOKIE_FILE=$2
     local -r BASE_URL=$3
 
-    local LOGIN_DATA PAGE STATUS NAME
+    local LOGIN_DATA PAGE STATUS NAME TYPE
 
     LOGIN_DATA='user_email=$USER&user_password=$PASSWORD&remindPassword=0'
 
@@ -46,10 +47,17 @@ catshare_login() {
     STATUS=$(parse_cookie_quiet 'session_id' < "$COOKIE_FILE")
     [ -z "$STATUS" ] && return $ERR_LOGIN_FAILED
 
-    NAME=$(echo "$PAGE" | parse 'Zalogowano' \
-            'Zalogowano \(.\+\)</a>') || return
+    NAME=$(parse_quiet 'Zalogowano' 'Zalogowano \(.\+\)</a>' <<< "$PAGE")
+    TYPE=$(parse 'Konto:' '\(Darmowe\|Premium\)' 1 <<< "$PAGE") || return
 
-    log_debug "Successfully logged in as member '$NAME'"
+    if [ "$TYPE" = 'Darmowe' ]; then
+        TYPE='free'
+    elif [ "$TYPE" = 'Premium' ]; then
+        TYPE='premium'
+    fi
+
+    log_debug "Successfully logged in as $TYPE member '$NAME'"
+    echo $TYPE
 }
 
 # Output a catshare.net file download URL
@@ -58,20 +66,50 @@ catshare_login() {
 # stdout: real file download link
 catshare_download() {
     local -r COOKIE_FILE=$1
-    local -r URL=$2
-    local PAGE WAIT_TIME FILE_URL FILE_NAME
+    local -r BASE_URL='http://catshare.net'
+    local URL ACCOUNT PAGE WAIT_TIME FILE_URL
+
+    # Get a canonical URL for this file.
+    URL=$(curl -I "$2" | grep_http_header_location_quiet) || return
+    [ -n "$URL" ] || URL=$2
+    readonly URL
 
     if [ -n "$AUTH" ]; then
-        catshare_login "$AUTH" "$COOKIE_FILE" 'https://catshare.net' || return
+        ACCOUNT=$(catshare_login "$AUTH" "$COOKIE_FILE" "$BASE_URL") || return
     fi
 
-    PAGE=$(curl -c "$COOKIE_FILE" -b "$COOKIE_FILE" "$URL") || return
+    # Note: Save HTTP headers to catch premium users' "direct downloads".
+    PAGE=$(curl -i -b "$COOKIE_FILE" "$URL") || return
 
-    if match "Podany plik został usunięty\|<title>Error 404</title>" "$PAGE"; then
+    if match "Nasz serwis wykrył że Twój adres IP nie pochodzi z Polski." "$PAGE"; then
+        log_error 'Free downloads are only allowed from Poland IP addresses.'
+        return $ERR_LINK_NEED_PERMISSIONS
+    elif match "Podany plik został usunięty\|<title>Error 404</title>" "$PAGE"; then
         return $ERR_LINK_DEAD
     fi
 
+    # If this is a premium download, we already have a download link.
+    if [ "$ACCOUNT" = 'premium' ]; then
+        MODULE_CATSHARE_DOWNLOAD_RESUME=yes
+
+        # Get a download link, if this was a direct download.
+        FILE_URL=$(grep_http_header_location_quiet <<< "$PAGE")
+
+        if [ -z "$FILE_URL" ]; then
+            FILE_URL=$(parse_attr '<form.*method="GET">' 'action' <<< "$PAGE") || return
+        fi
+
+        echo "$FILE_URL"
+        return 0
+    fi
+
     WAIT_TIME=$(parse 'var count = ' 'var count = \([0-9]\+\)' <<< "$PAGE") || return
+    # Note: If we wait more then 5 minutes then we definitely reached downloads limit.
+    if [[ $WAIT_TIME -gt 300 ]]; then
+        log_error 'Download limit reached.'
+        echo $WAIT_TIME
+        return $ERR_LINK_TEMP_UNAVAILABLE
+    fi
     wait $WAIT_TIME || return
 
     local PUBKEY WCI CHALLENGE WORD ID
@@ -85,7 +123,7 @@ catshare_download() {
         -d "recaptcha_response_field=$WORD" \
         "$URL") || return
 
-    FILE_URL=$(parse_attr_quiet '<form.*method="GET">' 'action' <<< "$PAGE") || return
+    FILE_URL=$(parse_attr_quiet '<form.*method="GET">' 'action' <<< "$PAGE")
 
     if [ -z "$FILE_URL" ]; then
         captcha_nack $ID
@@ -111,7 +149,10 @@ catshare_probe() {
 
     PAGE=$(curl -L "$URL") || return
 
-    if match "Podany plik został usunięty\|<title>Error 404</title>" "$PAGE"; then
+    if match "Nasz serwis wykrył że Twój adres IP nie pochodzi z Polski." "$PAGE"; then
+        log_error 'Free downloads are only allowed from Poland IP addresses.'
+        return $ERR_LINK_NEED_PERMISSIONS
+    elif match "Podany plik został usunięty\|<title>Error 404</title>" "$PAGE"; then
         return $ERR_LINK_DEAD
     fi
 
@@ -122,13 +163,14 @@ catshare_probe() {
     fi
 
     if [[ $REQ_IN = *s* ]]; then
-        FILE_SIZE=$(parse_tag 'class="pull-right"' h3 <<< "$PAGE") && \
-            translate_size "$FILE_SIZE" && REQ_OUT="${REQ_OUT}s"
+        FILE_SIZE=$(parse_tag 'class="pull-right"' h3 <<< "$PAGE") \
+            && FILE_SIZE=$(replace 'B' 'iB' <<< $FILE_SIZE) \
+            && translate_size "$FILE_SIZE" && REQ_OUT="${REQ_OUT}s"
     fi
 
     if [[ $REQ_IN = *i* ]]; then
-        parse_attr 'name="file_hash"' 'value' <<< "$PAGE" && \
-            REQ_OUT="${REQ_OUT}i"
+        parse 'property="og:url"' '.*/\([[:alnum:]]\+\)"' <<< "$PAGE" \
+            && REQ_OUT="${REQ_OUT}i"
     fi
 
     echo $REQ_OUT

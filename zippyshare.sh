@@ -67,7 +67,7 @@ zippyshare_login() {
 zippyshare_download() {
     local -r COOKIE_FILE=$1
     local -r URL=$2
-    local PAGE FILE_URL FILE_NAME PART_URL CONTENT JS FUNC N OMG
+    local PAGE FILE_URL FILE_NAME PART_URL CONTENT JS FUNC N
 
     # JSESSIONID required
     PAGE=$(curl -L -c "$COOKIE_FILE" -b 'ziplocale=en' "$URL") || return
@@ -141,12 +141,9 @@ zippyshare_download() {
             return $ERR_FATAL
     esac
 
-    JS=$(sed -n '/download\.png/,${
-          /^<script type="text\/javascript">/,/^<\/script>/{/^</!p}
+    JS=$(sed -n '/id="dlbutton"/,${
+          /^<script type="text\/javascript">/,/^<\/script>/{/^[[:space:]]*</!p}
           }' <<< "$PAGE")
-
-    # <span id="omg" class="2" style="display:none;"></span>
-    OMG=$(parse_attr 'id="omg"' class <<< "$PAGE")
 
     PART_URL=$(echo "var elts = new Array();
         var document = {
@@ -155,14 +152,19 @@ zippyshare_download() {
             return elts[id];
           }
         };
-
-        omgobj = {
-          getAttribute: function(attr) { return $OMG; },
+        var window = {
+            _taboola:0
         };
-
-        elts['omg'] = omgobj;
+        var _taboola = {
+            push: function(content) {
+            }
+        };
         $JS
-        print(elts['fimage'].href);" | javascript) || return
+        if (typeof console === 'object' && typeof console.log === 'function') {
+          console.log(elts['fimage'].href);
+        } else {
+          print(elts['fimage'].href);
+        }" | javascript) || return
 
     FILE_URL="$(basename_url "$URL")$PART_URL"
 

@@ -1,5 +1,5 @@
 # Plowshare uptobox.com module
-# Copyright (c) 2012-2015 Plowshare team
+# Copyright (c) 2012-2016 Plowshare team
 #
 # This file is part of Plowshare.
 #
@@ -104,7 +104,7 @@ uptobox_download() {
     local -r URL=$(replace '://www.' '://' <<< "$2")
     local -r BASE_URL='http://uptobox.com'
     local PAGE WAIT_TIME CODE PREMIUM CAPTCHA_DATA CAPTCHA_ID
-    local FORM_HTML FORM_OP FORM_USR FORM_ID FORM_FNAME FORM_RAND FORM_METHOD FORM_DD
+    local FORM_HTML FORM_OP FORM_USR FORM_ID FORM_FNAME FORM_RAND FORM_METHOD FORM_DD FORM_SZ
 
     if [ -n "$AUTH" ]; then
         uptobox_login "$AUTH" "$COOKIE_FILE" 'https://login.uptobox.com' || return
@@ -133,9 +133,22 @@ uptobox_download() {
 
     PAGE=$(uptobox_cloudflare "$PAGE" "$COOKIE_FILE" "$BASE_URL") || return
 
+    # To give priority to premium users, you have to wait x minutes, x seconds
+    if match '>To give priority to premium users, you have to wait' "$PAGE"; then
+        local MINS
+        MINS=$(parse_quiet 'you have to wait[[:space:]]' \
+                '[[:space:]]\([[:digit:]]\+\) minute' <<< "$PAGE") || MINS=60
+        echo $((MINS*60))
+        return $ERR_LINK_TEMP_UNAVAILABLE
+    fi
+
     # The file you were looking for could not be found, sorry for any inconvenience
     if matchi '<span[[:space:]].*File Not Found' "$PAGE"; then
         return $ERR_LINK_DEAD
+    elif match '<font class="err"><div class="page-top" align="center">Maintenance</div>' "$PAGE"; then
+        log_error 'Remote error: maintenance'
+        echo 3600
+        return $ERR_LINK_TEMP_UNAVAILABLE
     fi
 
     # Send (post) form
@@ -146,6 +159,7 @@ uptobox_download() {
     FORM_DD=$(parse_form_input_by_name_quiet 'down_direct' <<< "$FORM_HTML")
     FORM_RAND=$(parse_form_input_by_name 'rand' <<< "$FORM_HTML") || return
     FORM_METHOD=$(parse_form_input_by_name_quiet 'method_free' <<< "$FORM_HTML")
+    FORM_SZ=$(parse_form_input_by_name_quiet 'file_size_real' <<< "$FORM_HTML")
 
     # Handle premium downloads
     if [ "$PREMIUM" = '1' ]; then
@@ -162,11 +176,17 @@ uptobox_download() {
             -d "method_premium=$FORM_METHOD" "$URL") || return
 
         # Click here to start your download
-        FILE_URL=$(parse_attr '/d/' 'href' <<< "$FORM_HTML")
+        FILE_URL=$(parse_attr '/d/' 'href' <<< "$PAGE")
         if match_remote_url "$FILE_URL"; then
             echo "$FILE_URL"
             return 0
         fi
+    fi
+
+    local -r MAX_SIZE=10737418240 # 10GiB
+    if [ "$FORM_SZ" -gt $MAX_SIZE ]; then
+        log_debug "File is bigger than $MAX_SIZE"
+        return $ERR_SIZE_LIMIT_EXCEEDED
     fi
 
     # Check for enforced download limits
@@ -178,13 +198,15 @@ uptobox_download() {
         # You have to wait X minutes, Y seconds till next download
         # You have to wait Y seconds till next download
         elif matchi 'You have to wait' "$PAGE"; then
-            local MINS SECS
+            local HOURS MINS SECS
+            HOURS=$(parse_quiet '>You have to wait' \
+                '[[:space:]]\([[:digit:]]\+\) hour' <<< "$PAGE") || HOURS=0
             MINS=$(parse_quiet '>You have to wait' \
                 '[[:space:]]\([[:digit:]]\+\) minute' <<< "$PAGE") || MINS=0
             SECS=$(parse '>You have to wait' \
                 '[[:space:]]\([[:digit:]]\+\) second' 2>/dev/null <<< "$PAGE") || SECS=1
 
-            echo $(( MINS * 60 + SECS ))
+            echo $(( HOURS * 3600 + MINS * 60 + SECS ))
             return $ERR_LINK_TEMP_UNAVAILABLE
 
         elif match 'Expired download session' "$PAGE"; then

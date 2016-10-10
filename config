@@ -8,31 +8,38 @@
 anonfiles       | download | upload |        |      | probe |
 bayfiles        | download | upload | delete |      | probe |
 bayimg          | download | upload | delete |      | probe |
+bigfile         | download | upload | delete | list | probe |
 billionuploads  | download | upload |        |      | probe |
 bitshare        | download | upload | delete |      | probe |
 catshare        | download |        |        |      | probe |
 chomikuj        | download | upload |        | list | probe |
-cramit          | download | upload | delete | list | probe |
 crocko          | download | upload |        | list | probe |
 data_hu         | download | upload | delete |      |       |
+datafile        | download |        |        |      | probe |
 dataport_cz     | download | upload | delete |      |       |
 depositfiles    | download | upload | delete | list | probe |
 directmirror    |          | upload |        | list |       |
 divshare        | download | upload | delete | list | probe |
 dl_free_fr      | download | upload | delete |      | probe |
 embedupload     |          |        |        | list |       |
+espafiles       | download |        |        |      | probe |
 euroshare_eu    | download | upload | delete |      | probe |
 exoshare        |          | upload |        | list |       |
+faststore       | download |        |        |      | probe |
+fboom_me        | download |        |        |      | probe |
 filebin_ca      | download | upload |        |      | probe |
 filecloud       | download | upload |        | list | probe |
 filecore        | download |        |        |      | probe |
+filedais        | download |        |        |      | probe |
 filefactory     | download | upload |        | list | probe |
+filejoker       | download |        |        |      | probe |
 filemonkey      |          | upload |        |      |       |
 fileover        | download |        |        |      | probe |
 fileparadox     |          | upload |        |      |       |
 filepost        | download | upload | delete | list | probe |
 filepup_net     | download |        |        |      | probe |
 filer_net       | download |        |        | list | probe |
+fileshark       | download |        |        |      | probe |
 firedrive       | download |        |        |      | probe |
 flashx          | download |        |        |      | probe |
 freakshare      | download | upload |        |      | probe |
@@ -42,10 +49,13 @@ ge_tt           | download | upload |        | list | probe |
 gfile_ru        | download | upload |        |      | probe |
 go4up           |          | upload | delete | list |       |
 hdstream_to     | download | upload |        |      | probe |
+hexupload       | download |        |        |      | probe |
 hipfile         | download | upload | delete | list | probe |
+hotlink_cc      | download |        |        |      | probe |
 jheberg         |          | upload |        | list | probe |
 keep2share      | download | upload |        |      | probe |
 letitbit        | download | upload | delete | list | probe |
+lunaticfiles    | download |        |        |      | probe |
 mediafire       | download | upload |        | list | probe |
 megashares      | download | upload | delete |      | probe |
 mirrorcreator   |          | upload |        | list |       |
@@ -56,33 +66,41 @@ myvdrive        | download | upload |        | list | probe |
 nakido          | download |        |        |      | probe |
 netkups         | download | upload |        |      | probe |
 netload_in      | download | upload |        | list | probe |
+nitroflare      | download |        |        |      | probe |
 nowdownload_co  | download | upload |        |      | probe |
 oboom           | download | upload |        | list | probe |
-openload_io     | download |        |        |      | probe |
+openload        | download | upload |        |      | probe |
 pastebin        |          |        |        | list |       |
+prefiles        | download |        |        |      | probe |
 promptfile      | download |        |        |      | probe |
 rapidgator      | download | upload | delete | list | probe |
-rapidshare      | download | upload | delete |      | probe |
+rapidu          | download |        |        |      | probe |
 rghost          | download | upload |        |      | probe |
-rockfile_eu     |          | upload |        |      |       |
+rockfile_eu     |          | upload | delete |      |       |
 ryushare        | download | upload |        |      | probe |
+salefiles       | download |        |        |      | probe |
 sendspace       | download | upload | delete | list | probe |
 sharebeast      | download | upload | delete |      | probe |
+sharehost       | download |        |        |      | probe |
 shareonline_biz | download | upload |        |      | probe |
 sockshare       | download | upload | delete | list | probe |
 solidfiles      | download | upload |        | list | probe |
-tempsend        | download | upload |        |      |       |
+tempsend        | download | upload |        |      | probe |
+tempshare       | download |        |        |      | probe |
+tezfiles        | download |        |        |      | probe |
 thefilebay      | download | upload |        |      | probe |
 turbobit        | download | upload | delete | list | probe |
+uloz_to         | download |        |        |      | probe |
 ultramegabit    | download | upload |        |      | probe |
 uplea           | download |        |        |      | probe |
+upload_cd       | download |        |        |      | probe |
 uploadboy       | download |        |        |      | probe |
-uploadable_ch   | download | upload | delete | list | probe |
-uploadhero      | download | upload | delete | list | probe |
 uploading       | download | upload |        |      | probe |
 uploaded_net    | download | upload | delete | list | probe |
+uploadrocket    | download | upload | delete |      | probe |
 upstore         | download | upload |        |      | probe |
 uptobox         | download | upload |        |      | probe |
+videowood_tv    |          | upload |        |      |       |
 vidzi_tv        |          | upload |        |      |       |
 vid_ag          |          | upload |        |      |       |
 yourvideohost   | download |        |        |      | probe |

@@ -175,7 +175,7 @@ depositfiles_download() {
     DATA=$(curl --location "$BASE_URL/get_file.php?fid=$FID") || return
 
     # reCaptcha page (challenge forced)
-    if match 'load_recaptcha();' "$DATA"; then
+    if match 'load_recaptcha(.*);' "$DATA"; then
 
         local PUBKEY WCI CHALLENGE WORD ID
         PUBKEY='6LdRTL8SAAAAAE9UOdWZ4d0Ky-aeA7XfSqyWDM2m'
@@ -362,9 +362,14 @@ add_padding() {
 # $3: requested capability list
 # stdout: 1 capability per line
 depositfiles_probe() {
-    local -r URL=$2
+    local URL=$2
     local -r REQ_IN=$3
     local PAGE REQ_OUT FILE_NAME FILE_SIZE
+
+    # Note: Attach at the end of link ?redirect phrase.
+    #       Without it dead links may behave as normal links.
+    URL="${URL%?redirect}?redirect"
+    readonly URL
 
     PAGE=$(curl --location -b 'lang_current=en' "$URL") || return
 

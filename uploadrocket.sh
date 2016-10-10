@@ -1,4 +1,4 @@
-# Plowshare Rockfile.eu module
+# Plowshare uploadrocket.net module
 # Copyright (c) 2016 Plowshare team
 #
 # This file is part of Plowshare.
@@ -16,10 +16,17 @@
 # You should have received a copy of the GNU General Public License
 # along with Plowshare.  If not, see <http://www.gnu.org/licenses/>.
 
-MODULE_ROCKFILE_EU_REGEXP_URL='https\?://\(www\.\)\?rockfile\.eu/'
+MODULE_UPLOADROCKET_REGEXP_URL='https\?://\(www\.\)\?uploadrocket\.net/'
 
-MODULE_ROCKFILE_EU_UPLOAD_OPTIONS="
-AUTH,a,auth,a=USER:PASSWORD,User account (mandatory)
+MODULE_UPLOADROCKET_DOWNLOAD_OPTIONS="
+AUTH,a,auth,a=USER:PASSWORD,User account
+LINK_PASSWORD,p,link-password,S=PASSWORD,Used in password-protected files"
+MODULE_UPLOADROCKET_DOWNLOAD_RESUME=yes
+MODULE_UPLOADROCKET_DOWNLOAD_FINAL_LINK_NEEDS_COOKIE=no
+MODULE_UPLOADROCKET_DOWNLOAD_SUCCESSIVE_INTERVAL=
+
+MODULE_UPLOADROCKET_UPLOAD_OPTIONS="
+AUTH,a,auth,a=USER:PASSWORD,User account
 LINK_PASSWORD,p,link-password,S=PASSWORD,Protect a link with a password
 FOLDER,,folder,s=FOLDER,Folder to upload files into (support subfolders)
 DESCRIPTION,d,description,S=DESCRIPTION,Set file description
@@ -27,107 +34,16 @@ TOEMAIL,,email-to,e=EMAIL,<To> field for notification email
 PREMIUM_FILE,,premium,,Make file inaccessible to non-premium users
 PUBLISH_FILE,,publish,,Mark file to be published
 PROXY,,proxy,s=PROXY,Proxy for a remote link"
-MODULE_ROCKFILE_EU_UPLOAD_REMOTE_SUPPORT=yes
+MODULE_UPLOADROCKET_UPLOAD_REMOTE_SUPPORT=yes
 
-MODULE_ROCKFILE_EU_DELETE_OPTIONS=""
-
-# Static function. Check for and handle "DDoS protection"
-# $1: full content of initial page
-# $2: cookie file
-# $3: url (base url or file url)
-rockfile_eu_cloudflare() {
-    local PAGE=$1
-    local -r COOKIE_FILE=$2
-    local -r BASE_URL="$(basename_url "$3")"
-
-    # check for DDoS protection
-    # <title>Just a moment...</title>
-    if [[ $(parse_tag 'title' <<< "$PAGE") = *Just\ a\ moment* ]]; then
-        local TRY FORM_HTML FORM_VC FORM_PASS FORM_ANSWER JS
-
-        detect_javascript || return
-
-        # Note: We may not pass DDoS protection for the first time.
-        #       Limit loop to max 5.
-        TRY=0
-        while (( TRY++ < 5 )); do
-            log_debug "CloudFlare DDoS protection found - try $TRY"
-
-            wait 5 || return
-
-            FORM_HTML=$(grep_form_by_id "$PAGE" 'challenge-form') || return
-            FORM_VC=$(parse_form_input_by_name 'jschl_vc' <<< "$FORM_HTML") || return
-            FORM_PASS=$(parse_form_input_by_name 'pass' <<< "$FORM_HTML") || return
-
-            # Obfuscated javascript code
-            JS=$(grep_script_by_order "$PAGE") || return
-            JS=${JS#*<script type=\"text/javascript\">}
-            JS=${JS%*</script>}
-
-            FORM_ANSWER=$(echo "
-                function a_obj() {
-                    this.style = new Object();
-                    this.style.display = new Object();
-                };
-                function form_obj() {
-                    this.submit = function () {
-                        return;
-                    }
-                };
-                function href_obj() {
-                    this.firstChild = new Object();
-                    this.firstChild.href = '$BASE_URL/';
-                };
-                var elts = new Array();
-                var document = {
-                    attachEvent: function(name,value) {
-                        return value();
-                    },
-                    createElement: function(id) {
-                        return new href_obj();
-                    },
-                    getElementById: function(id) {
-                        if (! elts[id] && id == 'cf-content') {
-                            elts[id] = new a_obj();
-                        }
-                        if (! elts[id] && id == 'challenge-form') {
-                            elts[id] = new form_obj();
-                        }
-                        if (! elts[id]) {
-                            elts[id] = {};
-                        }
-                        return elts[id];
-                    }
-                };
-                var final_fun;
-                function setTimeout(value,time) {
-                    final_fun = value;
-                };
-                $JS
-                final_fun();
-                if (typeof console === 'object' && typeof console.log === 'function') {
-                    console.log(elts['jschl-answer'].value);
-                } else {
-                    print(elts['jschl-answer'].value);
-                }" | javascript) || return
-
-                # Set-Cookie: cf_clearance
-                PAGE=$(curl -L -b "$COOKIE_FILE" -c "$COOKIE_FILE" \
-                    "$BASE_URL/cdn-cgi/l/chk_jschl?jschl_vc=$FORM_VC&pass=$FORM_PASS&jschl_answer=$FORM_ANSWER") || return
-
-                if [[ $(parse_tag 'title' <<< "$PAGE") != *Just\ a\ moment* ]]; then
-                    break
-                fi
-            done
-        fi
-}
+MODULE_UPLOADROCKET_DELETE_OPTIONS=""
+MODULE_UPLOADROCKET_PROBE_OPTIONS=""
 
 # Switch language to english
 # $1: cookie file
 # $2: base URL
-rockfile_eu_switch_lang() {
-    # Set-Cookie: lang
-    curl "$2" -b "$1" -c "$1" -d 'op=change_lang' \
+uploadrocket_switch_lang() {
+    curl "$2" -c "$1" -d 'op=change_lang' \
         -d 'lang=english' > /dev/null || return
 }
 
@@ -136,7 +52,7 @@ rockfile_eu_switch_lang() {
 # $2: cookie file
 # $3: base URL
 # stdout: account type ("free" or "premium") on success.
-rockfile_eu_login() {
+uploadrocket_login() {
     local -r AUTH=$1
     local -r COOKIE_FILE=$2
     local -r BASE_URL=$3
@@ -146,8 +62,8 @@ rockfile_eu_login() {
         echo "$CV" >"$COOKIE_FILE"
 
         # Check for expired session.
-        PAGE=$(curl -b "$COOKIE_FILE" "$BASE_URL/account") || return
-        if ! match '>Used space:<' "$PAGE"; then
+        PAGE=$(curl -b "$COOKIE_FILE" "$BASE_URL/?op=my_account") || return
+        if ! match '>Username:<' "$PAGE"; then
             storage_set 'cookie_file'
             return $ERR_EXPIRED_SESSION
         fi
@@ -156,16 +72,12 @@ rockfile_eu_login() {
         log_debug "session (cached): '$SESS'"
         MSG='reused login for'
     else
-        PAGE=$(curl -c "$COOKIE_FILE" "$BASE_URL") || return
-        rockfile_eu_cloudflare "$PAGE" "$COOKIE_FILE" "$BASE_URL" || return
-        rockfile_eu_switch_lang "$COOKIE_FILE" "$BASE_URL" || return
-
-        LOGIN_DATA='op=login&redirect=account&login=$USER&password=$PASSWORD'
+        LOGIN_DATA='op=login&redirect=my_account&login=$USER&password=$PASSWORD'
 
         PAGE=$(post_login "$AUTH" "$COOKIE_FILE" "$LOGIN_DATA" \
             "$BASE_URL" -L -b "$COOKIE_FILE") || return
 
-        # If successful Set-Cookie: login xfss
+        # If successful, two entries are added into cookie file: login and xfss.
         STATUS=$(parse_cookie_quiet 'xfss' < "$COOKIE_FILE")
         [ -z "$STATUS" ] && return $ERR_LOGIN_FAILED
 
@@ -178,7 +90,7 @@ rockfile_eu_login() {
 
     NAME=$(parse_cookie_quiet 'login' < "$COOKIE_FILE")
 
-    if match 'Go premium<' "$PAGE"; then
+    if match '>Upgrade to premium<' "$PAGE"; then
         TYPE='free'
     else
         TYPE='premium'
@@ -188,13 +100,126 @@ rockfile_eu_login() {
     echo $TYPE
 }
 
+# Output a uploadrocket file download URL
+# $1: cookie file
+# $2: uploadrocket url
+# stdout: real file download link
+uploadrocket_download() {
+    local -r COOKIE_FILE=$1
+    local -r BASE_URL='http://uploadrocket.net'
+    local URL ACCOUNT PAGE PASSWORD_DATA ERR FORM_HTML FORM_OP FORM_USR
+    local FORM_ID FORM_REF FORM_METHOD_F FORM_METHOD_P FORM_RAND FORM_DS
+
+    # Get a canonical URL for this file.
+    URL=$(curl -I "$2" | grep_http_header_location_quiet) || return
+    [ -n "$URL" ] || URL=$2
+    readonly URL
+
+    uploadrocket_switch_lang "$COOKIE_FILE" "$BASE_URL"
+
+    if [ -n "$AUTH" ]; then
+        ACCOUNT=$(uploadrocket_login "$AUTH" "$COOKIE_FILE" "$BASE_URL") || return
+    fi
+
+    PAGE=$(curl -b "$COOKIE_FILE" -c "$COOKIE_FILE" "$URL" \
+        | strip_html_comments) || return
+
+    if match '>\(File Not Found\|No such file with this filename\|The file was removed by administrator\)<' "$PAGE"; then
+        return $ERR_LINK_DEAD
+    fi
+
+    FORM_HTML=$(grep_form_by_id "$PAGE" 'ID_freeorpremium') || return
+    FORM_OP=$(parse_form_input_by_name 'op' <<< "$FORM_HTML") || return
+    FORM_USR=$(parse_form_input_by_name_quiet 'usr_login' <<< "$FORM_HTML")
+    FORM_ID=$(parse_form_input_by_name_quiet 'id' <<< "$FORM_HTML") || return
+    FORM_REF=$(parse_form_input_by_name_quiet 'referer' <<< "$FORM_HTML")
+    FORM_METHOD_F=$(parse_form_input_by_name_quiet 'method_isfree' <<< "$FORM_HTML")
+
+    if [ -z "$FORM_ID" ]; then
+        return $ERR_LINK_DEAD
+    fi
+
+    PAGE=$(curl -b "$COOKIE_FILE" \
+        -d "op=$FORM_OP" \
+        -d "usr_login=$FORM_USR" \
+        -d "id=$FORM_ID" \
+        -d "referer=$FORM_REF" \
+        --data-urlencode "method_isfree=$FORM_METHOD_F" \
+        "$URL") || return
+
+    # Check for premium only files.
+    if match '>This file is available for Premium Users only' "$PAGE"; then
+        log_error 'This file is available for Premium Users only.'
+        return $ERR_LINK_NEED_PERMISSIONS
+
+    # Check for files that need a password.
+    elif match 'Password:.*name="password"' "$PAGE"; then
+        log_debug 'File is password protected.'
+
+        if [ -z "$LINK_PASSWORD" ]; then
+            LINK_PASSWORD=$(prompt_for_password) || return
+        fi
+
+        PASSWORD_DATA="-d password=$(replace_all ' ' '+' <<< "$LINK_PASSWORD")"
+    fi
+
+    FORM_HTML=$(grep_form_by_id "$PAGE" 'ID_F1') || return
+    FORM_OP=$(parse_form_input_by_name 'op' <<< "$FORM_HTML") || return
+    FORM_ID=$(parse_form_input_by_name 'id' <<< "$FORM_HTML") || return
+    FORM_RAND=$(parse_form_input_by_name 'rand' <<< "$FORM_HTML") || return
+    FORM_REF=$(parse_form_input_by_name_quiet 'referer' <<< "$FORM_HTML")
+    FORM_METHOD_F=$(parse_form_input_by_name_quiet 'method_isfree' <<< "$FORM_HTML")
+    FORM_METHOD_P=$(parse_form_input_by_name_quiet 'method_ispremium' <<< "$FORM_HTML")
+    FORM_DS=$(parse_form_input_by_name_quiet 'down_script' <<< "$FORM_HTML")
+
+    local PUBKEY RESP CHALLENGE ID
+    PUBKEY='mC2C7c.3-sHSuvEpXYQrUJ-TQy3PH2ET'
+    RESP=$(solvemedia_captcha_process $PUBKEY) || return
+    { read CHALLENGE; read ID; } <<< "$RESP"
+
+    PAGE=$(curl -b "$COOKIE_FILE" \
+        -d "op=$FORM_OP" \
+        -d "id=$FORM_ID" \
+        -d "rand=$FORM_RAND" \
+        -d "referer=$FORM_REF" \
+        $PASSWORD_DATA \
+        --data-urlencode "method_isfree=$FORM_METHOD_F" \
+        --data-urlencode "method_ispremium=$FORM_METHOD_P" \
+        --data-urlencode 'adcopy_response=manual_challenge' \
+        --data-urlencode "adcopy_challenge=$CHALLENGE" \
+        -d "down_script=$FORM_DS" \
+        "$URL") || return
+
+    ERR=$(parse_quiet '<div class="err">' '^\(.*\)$' 1 <<< "$PAGE" | strip)
+
+    if [ -n "$ERR" ]; then
+        if [ "$ERR" = 'Wrong captcha' ]; then
+            captcha_nack $ID
+            log_error 'Wrong captcha'
+            return $ERR_CAPTCHA
+
+        elif [ "$ERR" = 'Wrong password' ]; then
+            log_error 'Wrong password'
+            return $ERR_LINK_PASSWORD_REQUIRED
+        fi
+
+        log_error "Unexpected error: $ERR"
+        return $ERR_FATAL
+    fi
+
+    captcha_ack $ID
+    log_debug 'Correct captcha'
+
+    parse_attr 'Direct Download Link' 'href' <<< "$PAGE" || return
+}
+
 # Static function. Check if specified folder name is valid.
 # If folder not found then create it. Support subfolders.
 # $1: folder name selected by user
 # $2: cookie file (logged into account)
 # $3: base URL
 # stdout: folder id
-rockfile_eu_check_folder() {
+uploadrocket_check_folder() {
     local -r NAME=$1
     local -r COOKIE_FILE=$2
     local -r BASE_URL=$3
@@ -249,26 +274,38 @@ rockfile_eu_check_folder() {
     echo $FOLDER_ID
 }
 
-# Upload a file to rockfile.eu
+# Upload a file to uploadrocket
 # $1: cookie file
 # $2: input file (with full path)
 # $3: remote filename
 # stdout: download link + delete link
-rockfile_eu_upload() {
+uploadrocket_upload() {
     local -r COOKIE_FILE=$1
     local -r FILE=$2
     local -r DESTFILE=$3
-    local -r BASE_URL='http://rockfile.eu'
-    local ACCOUNT MAX_SIZE SIZE FOLDER_ID PAGE USER_TYPE UPLOAD_ID
-
-    # User account is mandatory
-    if [ -n "$AUTH" ]; then
-        ACCOUNT=$(rockfile_eu_login "$AUTH" "$COOKIE_FILE" "$BASE_URL") || return
-    else
-        return $ERR_LINK_NEED_PERMISSIONS
-    fi
+    local -r BASE_URL='http://uploadrocket.net'
+    local MAX_SIZE MSG SIZE ACCOUNT FOLDER_ID PAGE USER_TYPE UPLOAD_ID
 
     # Sanity checks
+    if [ -z "$AUTH" ]; then
+        if [ -n "$FOLDER" ]; then
+            log_error 'You must be registered to use folders.'
+            return $ERR_LINK_NEED_PERMISSIONS
+
+        elif match_remote_url "$FILE"; then
+            log_error 'You must be registered to do remote uploads.'
+            return $ERR_LINK_NEED_PERMISSIONS
+
+        elif [ -n "$PREMIUM_FILE" ]; then
+            log_error 'You must be registered to mark premium file.'
+            return $ERR_LINK_NEED_PERMISSIONS
+
+        elif [ -n "$PUBLISH_FILE" ]; then
+            log_error 'You must be registered to mark publish file.'
+            return $ERR_LINK_NEED_PERMISSIONS
+        fi
+    fi
+
     if match_remote_url "$FILE"; then
         if [ -n "$DESCRIPTION" ]; then
             log_error 'You cannot set description for remote link.'
@@ -281,30 +318,37 @@ rockfile_eu_upload() {
         fi
     fi
 
-    # File size check
+    # File size check.
     if ! match_remote_url "$FILE"; then
-        # Note: Max upload file size for 'free' users is limited to 2 GiB,
-        #       for 'premium' accounts is limited to 6 GiB.
-        if [ "$ACCOUNT" = 'free' ]; then
-            MAX_SIZE=2147483648 # 2 GiB
+        # Note: Max upload file size for anonymous is limited to 2000 MiB,
+        #       for 'free' and 'premium' accounts is limited to 6144 MiB.
+        if [ -n "$AUTH" ]; then
+            MAX_SIZE=6442450944 # 6144 MiB
+            MSG='registered'
         else
-            MAX_SIZE=6442450944 # 6 MiB
+            MAX_SIZE=2097152000 # 2000 MiB
+            MSG='anonymous'
         fi
 
         SIZE=$(get_filesize "$FILE")
         if [ $SIZE -gt $MAX_SIZE ]; then
-            log_debug "File is bigger than $MAX_SIZE for $ACCOUNT user."
+            log_debug "File is bigger than $MAX_SIZE for $MSG user."
             return $ERR_SIZE_LIMIT_EXCEEDED
         fi
     fi
 
-    # Choose a folder
-    if [ -n "$FOLDER" ]; then
-        FOLDER_ID=$(rockfile_eu_check_folder "$FOLDER" "$COOKIE_FILE" \
-            "$BASE_URL") || return
+    uploadrocket_switch_lang "$COOKIE_FILE" "$BASE_URL"
+
+    if [ -n "$AUTH" ]; then
+        ACCOUNT=$(uploadrocket_login "$AUTH" "$COOKIE_FILE" "$BASE_URL") || return
+
+        if [ -n "$FOLDER" ]; then
+            FOLDER_ID=$(uploadrocket_check_folder "$FOLDER" "$COOKIE_FILE" \
+                "$BASE_URL") || return
+        fi
     fi
 
-    PAGE=$(curl -b "$COOKIE_FILE" "$BASE_URL/upload_files") || return
+    PAGE=$(curl -b "$COOKIE_FILE" "$BASE_URL") || return
 
     # "reg"
     USER_TYPE=$(parse 'var utype' "='\([^']*\)" <<< "$PAGE") || return
@@ -313,21 +357,21 @@ rockfile_eu_upload() {
     UPLOAD_ID=$(random dec 12) || return
 
     local FORM_HTML FORM_ACTION FORM_SESS FORM_UTYPE FORM_SRV_TMP FORM_BUTTON FORM_TOS
-    local FORM_FN FORM_ST FORM_OP TOEMAIL_DATA FILE_URL FILE_DEL_URL FILE_ID
+    local FORM_FN FORM_ST FORM_OP TOEMAIL_DATA FILE_URL FILE_DEL_URL FILE_ID RND
 
     # Upload local file
     if ! match_remote_url "$FILE"; then
         FORM_HTML=$(grep_form_by_name "$PAGE" 'file') || return
-        FORM_ACTION=$(parse_form_action <<< "$PAGE") || return
-        FORM_UTYPE=$(parse_form_input_by_name 'upload_type' <<< "$PAGE") || return
-        FORM_SESS=$(parse_form_input_by_name_quiet 'sess_id' <<< "$PAGE")
-        FORM_SRV_TMP=$(parse_form_input_by_name 'srv_tmp_url' <<< "$PAGE") || return
-        FORM_BUTTON=$(parse_form_input_by_name 'submit_btn' <<< "$PAGE") || return
+        FORM_ACTION=$(parse_form_action <<< "$FORM_HTML") || return
+        FORM_SESS=$(parse_form_input_by_name_quiet 'sess_id' <<< "$FORM_HTML")
+        FORM_UTYPE=$(parse_form_input_by_name 'upload_type' <<< "$FORM_HTML") || return
+        FORM_SRV_TMP=$(parse_form_input_by_name 'srv_tmp_url' <<< "$FORM_HTML") || return
+        FORM_BUTTON=$(parse_form_input_by_name 'submit_btn' <<< "$FORM_HTML") || return
 
         PAGE=$(curl_with_log \
             -F "upload_type=$FORM_UTYPE" \
             -F "sess_id=$FORM_SESS" \
-            -F "srv_tmp_url=$FORM_TMP_SRV" \
+            -F "srv_tmp_url=$FORM_SRV_TMP" \
             -F 'file_0=;filename=' \
             -F "file_0=@$FILE;filename=$DESTFILE" \
             --form-string "file_0_descr=$DESCRIPTION" \
@@ -336,7 +380,7 @@ rockfile_eu_upload() {
             -F "to_folder=$FOLDER_ID" \
             -F 'file_1=;filename=' \
             --form-string "submit_btn=$FORM_BUTTON" \
-            "${FORM_ACTION}${UPLOAD_ID}&utype=${USER_TYPE}&js_on=1&upload_type=${FORM_UTYPE}" \
+            "${FORM_ACTION}${UPLOAD_ID}&js_on=1&utype=${USER_TYPE}&upload_type=${FORM_UTYPE}" \
             | break_html_lines) || return
 
     # Upload remote file
@@ -378,15 +422,15 @@ rockfile_eu_upload() {
         return $ERR_FATAL
     fi
 
-    PAGE=$(curl -b "$COOKIE_FILE" \
+    PAGE=$(curl \
         -d "fn=$FORM_FN" \
         -d "st=$FORM_ST" \
         -d "op=$FORM_OP" \
         $TOEMAIL_DATA \
         "$FORM_ACTION") || return
 
-    FILE_URL=$(parse '>Download Link<' '">\(.*\)$' 1 <<< "$PAGE") || return
-    FILE_DEL_URL=$(parse '>Delete Link<' '">\(.*\)$' 1 <<< "$PAGE") || return
+    FILE_URL=$(parse_tag 'id="ic0-"' textarea <<< "$PAGE") || return
+    FILE_DEL_URL=$(parse_tag 'id="ic3-"' textarea <<< "$PAGE") || return
 
     # Note: Set premium and publish flag after uploading a file.
     if [ -n "$PREMIUM_FILE" -o -n "$PUBLISH_FILE" ]; then
@@ -397,10 +441,11 @@ rockfile_eu_upload() {
         if [ -n "$PREMIUM_FILE" ]; then
             log_debug 'Setting premium flag...'
 
+            RND=$(random js) || return
             PAGE=$(curl -b "$COOKIE_FILE" \
-                "$BASE_URL/?op=my_files&set_flag=file_premium_only&value=true&file_id\[\]=$FILE_ID") || return
+                "$BASE_URL/?op=my_files&file_id=$FILE_ID&set_premium_only=true&rnd=$RND") || return
 
-            if ! match 'OK' "$PAGE"; then
+            if ! match "className='pub'" "$PAGE"; then
                 log_error 'Could not set premium flag.'
             fi
         fi
@@ -408,10 +453,11 @@ rockfile_eu_upload() {
         if [ -n "$PUBLISH_FILE" ]; then
             log_debug 'Setting publish flag...'
 
+            RND=$(random js) || return
             PAGE=$(curl -b "$COOKIE_FILE" \
-                "$BASE_URL/?op=my_files&set_flag=file_public&value=true&file_id\[\]=$FILE_ID") || return
+                "$BASE_URL/?op=my_files&file_id=$FILE_ID&set_public=true&rnd=$RND") || return
 
-            if ! match 'OK' "$PAGE"; then
+            if ! match "className='pub'" "$PAGE"; then
                 log_error 'Could not set publish flag.'
             fi
         fi
@@ -421,22 +467,18 @@ rockfile_eu_upload() {
     echo "$FILE_DEL_URL"
 }
 
-# Delete a file uploaded to rockfile_eu
-# $1: cookie file
+# Delete a file uploaded to uploadrocket
+# $1: cookie file (unused here)
 # $2: delete url
-rockfile_eu_delete() {
-    local -r COOKIE_FILE=$1
+uploadrocket_delete() {
     local -r URL=$2
-    local -r BASE_URL='http://rockfile.eu'
+    local -r BASE_URL='http://uploadrocket.net'
     local FILE_ID FILE_DEL_ID PAGE
-
-    PAGE=$(curl "$URL") || return
-    rockfile_eu_cloudflare "$PAGE" "$COOKIE_FILE" "$BASE_URL" || return
 
     FILE_ID=$(parse . "^$BASE_URL/\([[:alnum:]]\+\)" <<< "$URL") || return
     FILE_DEL_ID=$(parse . 'killcode=\([[:alnum:]]\+\)$' <<< "$URL") || return
 
-    PAGE=$(curl -b "$COOKIE_FILE" -e "$URL" \
+    PAGE=$(curl -b 'lang=english' -e "$URL" \
         -d "op=del_file" \
         -d "id=$FILE_ID" \
         -d "del_id=$FILE_DEL_ID" \
@@ -452,4 +494,51 @@ rockfile_eu_delete() {
     fi
 
     return $ERR_FATAL
+}
+
+# Probe a download URL
+# $1: cookie file (unused here)
+# $2: uploadrocket url
+# $3: requested capability list
+# stdout: 1 capability per line
+uploadrocket_probe() {
+    local -r URL=$2
+    local -r REQ_IN=$3
+    local -r BASE_URL='http://uploadrocket.net'
+    local PAGE FILE_SIZE REQ_OUT
+
+    # Check a file through a link checker.
+    PAGE=$(curl -b 'lang=english' \
+        -d 'op=checkfiles' \
+        -d "list=$URL" \
+        -d 'process=Check URLs' \
+        "$BASE_URL/?op=checkfiles") || return
+
+    if match '>Not found!<' "$PAGE"; then
+        return $ERR_LINK_DEAD
+
+    elif match ">Filename don't match!<" "$PAGE"; then
+        log_error "Filename don't match!"
+        return $ERR_FATAL
+    fi
+
+    REQ_OUT=c
+
+    if [[ $REQ_IN = *f* ]]; then
+        parse_quiet . '/[[:alnum:]]\+/\([^/]*\)' <<< "$URL" \
+            | replace '.html' '' | replace '.htm' '' \
+            && REQ_OUT="${REQ_OUT}f"
+    fi
+
+    if [[ $REQ_IN = *s* ]]; then
+        FILE_SIZE=$(parse . '>Found</td><td>\([^<]*\)' <<< "$PAGE") \
+            && FILE_SIZE=$(replace 'B' 'iB' <<< $FILE_SIZE) \
+            && translate_size "$FILE_SIZE" && REQ_OUT="${REQ_OUT}s"
+    fi
+
+    if [[ $REQ_IN = *i* ]]; then
+        parse . 'net/\([[:alnum:]]\+\)' <<< "$URL" && REQ_OUT="${REQ_OUT}i"
+    fi
+
+    echo $REQ_OUT
 }

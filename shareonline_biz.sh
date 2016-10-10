@@ -28,6 +28,8 @@ MODULE_SHAREONLINE_BIZ_UPLOAD_OPTIONS="
 AUTH,a,auth,a=USER:PASSWORD,User account (mandatory)"
 MODULE_SHAREONLINE_BIZ_UPLOAD_REMOTE_SUPPORT=no
 
+MODULE_SHAREONLINE_BIZ_PROBE_OPTIONS=
+
 # Static function. Proceed with login
 # $1: authentication
 # $2: cookie file
@@ -60,7 +62,7 @@ shareonline_biz_login() {
         'Sammler')
             TYPE='free'
             ;;
-        'Premium'|'Penalty-Premium'|'VIP-Special')
+        'Premium'|'Penalty-Premium'|'VIP-Special'|'VIP')
             [ "$TYPE" = 'Penalty-Premium' ] && log_error 'Account is in penalty state!'
             TYPE='premium'
             ;;

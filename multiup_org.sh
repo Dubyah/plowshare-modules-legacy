@@ -136,7 +136,7 @@ multiup_org_upload() {
 # $2: recurse subfolders (ignored here)
 # stdout: list of links
 multiup_org_list() {
-    local -r URL=$(replace '/miror/' '/download/' <<<"$1")
+    local -r URL=$(replace '/download/' '/en/mirror/' <<<"$1")
     local -r BASE_URL='http://www.multiup.org'
     local COOKIE_FILE PAGE LINK LINKS NAMES
 
@@ -180,7 +180,7 @@ multiup_org_probe() {
     local -r REQ_IN=$3
     local JSON REQ_OUT FILE_NAME HASH
 
-    # Notes relatinf to offcial API:
+    # Notes relating to official API:
     # - don't provide file size
     # - provides both md5 & sha1
     JSON=$(curl -F "link=$URL" 'http://www.multiup.org/api/check-file') || return

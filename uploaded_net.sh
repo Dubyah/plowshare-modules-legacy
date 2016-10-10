@@ -70,7 +70,7 @@ uploaded_net_login() {
     # Determine account type
     PAGE=$(curl -b "$COOKIE_FILE" "$BASE_URL/me") || return
     ID=$(parse 'ID:' '<em.*>\(.*\)</em>' 1 <<< "$PAGE") || return
-    TYPE=$(parse 'Status:' '<em>\(.*\)</em>' 1 <<< "$PAGE") || return
+    TYPE=$(parse 'Status:' '<em>\(.*\)</em>' 2 <<< "$PAGE") || return
     NAME=$(parse_quiet 'Alias:' '<b><b>\(.*\)</b></b>' 1 <<< "$PAGE")
 
     if [ "$TYPE" = 'Free' ]; then
@@ -225,7 +225,13 @@ uploaded_net_download() {
         return $ERR_FATAL
     fi
 
-    REDIR_URL=$(curl --head "$URL" | grep_http_header_location_quiet)
+    PAGE=$(curl -i "$URL") || return
+
+    if match '>Page not found<' "$PAGE"; then
+        return $ERR_LINK_DEAD
+    fi
+
+    REDIR_URL=$(grep_http_header_location_quiet <<< "$PAGE")
     if [ -n "$REDIR_URL" ]; then
         # Check for direct download
         if match '/dl/' "$REDIR_URL"; then
@@ -235,10 +241,6 @@ uploaded_net_download() {
             echo "$FILE_NAME"
             return 0
 
-        # Page not found
-        # The requested file isn't available anymore!
-        elif match "$BASE_URL/\(404\|410\)" "$REDIR_URL"; then
-            return $ERR_LINK_DEAD
         else
             log_error "remote suspicious redirection: $REDIR_URL"
         fi
@@ -262,7 +264,7 @@ uploaded_net_download() {
 
         # Determine account type
         local TYPE
-        TYPE=$(parse 'Status:' '<em>\(.*\)</em>' 1 <<< "$PAGE") || return
+        TYPE=$(parse 'Status:' '<em>\(.*\)</em>' 2 <<< "$PAGE") || return
         ACCOUNT=$(lowercase "$TYPE")
 
         SESS=$(parse_cookie 'auth' < "$COOKIE_FILE")
@@ -298,11 +300,9 @@ uploaded_net_download() {
     FILE_NAME=$(curl "$BASE_URL/file/$FILE_ID/status" | first_line) || return
 
     if [ "$ACCOUNT" = 'premium' ]; then
-        # Premium users can resume downloads
+        # Premium users can resume downloads and don't wait
         MODULE_UPLOADED_NET_DOWNLOAD_RESUME=yes
-
-        # Seems that download rate is lowered..
-        MODULE_UPLOADED_NET_DOWNLOAD_SUCCESSIVE_INTERVAL=30
+        MODULE_UPLOADED_NET_DOWNLOAD_SUCCESSIVE_INTERVAL=0
 
         # Get download link, if this was a direct download
         FILE_URL=$(grep_http_header_location_quiet <<< "$PAGE")
@@ -494,7 +494,7 @@ uploaded_net_upload() {
 
         # Determine account type
         local TYPE
-        TYPE=$(parse 'Status:' '<em>\(.*\)</em>' 1 <<< "$PAGE") || return
+        TYPE=$(parse 'Status:' '<em>\(.*\)</em>' 2 <<< "$PAGE") || return
         ACCOUNT=$(lowercase "$TYPE")
 
         SESS=$(parse_cookie 'auth' < "$COOKIE_FILE")
@@ -591,9 +591,9 @@ uploaded_net_delete() {
         return $ERR_FATAL
     fi
 
-    # Page not found
-    # The requested file isn't available anymore!
-    if match "$BASE_URL/\(404\|410\)" "$URL"; then
+    PAGE=$(curl -L "$URL") || return
+
+    if match '>Page not found<' "$PAGE"; then
         return $ERR_LINK_DEAD
     fi
 
@@ -643,13 +643,14 @@ uploaded_net_probe() {
 
     URL=$(uploaded_net_get_canonical_url "$2") || return
 
-    # Page not found
-    # The requested file isn't available anymore!
-    [[ $URL = */404 || $URL = */410/* ]]  && return $ERR_LINK_DEAD
-    REQ_OUT=c
-
     FILE_ID=$(uploaded_net_extract_file_id "$URL" "$BASE_URL") || return
     PAGE=$(curl --location "$BASE_URL/file/$FILE_ID/status") || return
+
+    if match '>Page not found<' "$PAGE"; then
+        return $ERR_LINK_DEAD
+    fi
+
+    REQ_OUT=c
 
     if [[ $REQ_IN = *f* ]]; then
         first_line <<< "$PAGE" && REQ_OUT="${REQ_OUT}f"
