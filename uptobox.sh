@@ -1,5 +1,5 @@
 # Plowshare uptobox.com module
-# Copyright (c) 2012-2016 Plowshare team
+# Copyright (c) 2012-2017 Plowshare team
 #
 # This file is part of Plowshare.
 #
@@ -71,25 +71,11 @@ uptobox_cloudflare() {
     local -r BASE_URL=$3
     local PAGE=$1
 
-    # check for captcha
     # <title>Attention Required! | CloudFlare</title>
-    if [[ $(parse_tag 'title' <<< "$PAGE") = *CloudFlare* ]]; then
-        local -r PUBKEY='6LeT6gcAAAAAAAZ_yDmTMqPH57dJQZdQcu6VFqog'
-        local WORD CHALLENGE ID RESP FORM FORM_ACTION FORM_ID
-        log_debug 'Cloudflare captcha found'
-
-        FORM=$(grep_form_by_id "$PAGE" 'challenge-form') || return
-        FORM_ACTION=$(parse_form_action "$FORM") || return
-        FORM_ID=$(parse_form_input_by_id 'id' <<< "$FORM") || return
-
-        RESP=$(recaptcha_process $PUBKEY) || return
-        { read WORD; read CHALLENGE; read ID; } <<< "$RESP"
-
-        PAGE=$(curl -b "$COOKIE_FILE" -b 'lang=english' \
-            -d "recaptcha_challenge_field=$CHALLENGE" \
-            -d "recaptcha_response_field=$WORD" \
-            -d 'message=' -d "id=$FORM_ID" \
-            "${BASE_URL}/${FORM_ACTION}") || return
+    if matchi 'Cloudflare' "$(parse_tag 'title' <<< "$PAGE")"; then
+        log_error 'Cloudflare captcha request, plowshare does not handle new google captchas'
+        # FIXME
+        return $ERR_FATAL
     fi
 
     echo "$PAGE"
@@ -140,6 +126,14 @@ uptobox_download() {
                 '[[:space:]]\([[:digit:]]\+\) minute' <<< "$PAGE") || MINS=60
         echo $((MINS*60))
         return $ERR_LINK_TEMP_UNAVAILABLE
+    # You need a PREMIUM account to download new files immediatly without waiting
+    elif match '>You need a PREMIUM account to download' "$PAGE"; then
+        MINS=$(parse_quiet 'you can wait[[:space:]]' \
+                '[[:space:]]\([[:digit:]]\+\) minute' <<< "$PAGE") || MINS=60
+        SECS=$(parse_quiet 'you can wait[[:space:]]' \
+                '[[:space:]]\([[:digit:]]\+\) second' <<< "$PAGE") || SECS=1
+        echo $((MINS * 60 + SECS))
+        return $ERR_LINK_TEMP_UNAVAILABLE
     fi
 
     # The file you were looking for could not be found, sorry for any inconvenience
@@ -152,14 +146,13 @@ uptobox_download() {
     fi
 
     # Send (post) form
-    # FIXME later: fname & file_size_real
+    # FIXME later: fname
     FORM_HTML=$(grep_form_by_name "$PAGE" 'F1') || return
     FORM_OP=$(parse_form_input_by_name 'op' <<< "$FORM_HTML") || return
     FORM_ID=$(parse_form_input_by_name 'id' <<< "$FORM_HTML") || return
     FORM_DD=$(parse_form_input_by_name_quiet 'down_direct' <<< "$FORM_HTML")
     FORM_RAND=$(parse_form_input_by_name 'rand' <<< "$FORM_HTML") || return
     FORM_METHOD=$(parse_form_input_by_name_quiet 'method_free' <<< "$FORM_HTML")
-    FORM_SZ=$(parse_form_input_by_name_quiet 'file_size_real' <<< "$FORM_HTML")
 
     # Handle premium downloads
     if [ "$PREMIUM" = '1' ]; then
@@ -181,12 +174,6 @@ uptobox_download() {
             echo "$FILE_URL"
             return 0
         fi
-    fi
-
-    local -r MAX_SIZE=10737418240 # 10GiB
-    if [ "$FORM_SZ" -gt $MAX_SIZE ]; then
-        log_debug "File is bigger than $MAX_SIZE"
-        return $ERR_SIZE_LIMIT_EXCEEDED
     fi
 
     # Check for enforced download limits
@@ -212,6 +199,8 @@ uptobox_download() {
         elif match 'Expired download session' "$PAGE"; then
             log_error 'Remote error: expired session'
             return $ERR_LINK_TEMP_UNAVAILABLE
+        elif match '>premium member<' "$PAGE"; then
+            return $ERR_LINK_NEED_PERMISSIONS
         fi
     fi
 
@@ -289,46 +278,19 @@ uptobox_upload() {
 
     PAGE=$(curl -b "$COOKIE_FILE" -b 'lang=english' "$BASE_URL") || return
 
-    # "anon", "reg", "prem"
-    USER_TYPE=$(parse 'var utype' "='\([^']*\)" <<< "$PAGE") || return
-    log_debug "User type: '$USER_TYPE'"
-
-    FORM_HTML=$(grep_form_by_name "$PAGE" 'file') || return
-    FORM_ACTION=$(parse_form_action <<< "$PAGE") || return
-    FORM_UTYPE=$(parse_form_input_by_name 'upload_type' <<< "$PAGE") || return
-    FORM_TMP_SRV=$(parse_form_input_by_name 'srv_tmp_url' <<< "$PAGE") || return
-    FORM_BUTTON=$(parse_form_input_by_name 'submit_btn' <<< "$PAGE") || return
+    FORM_HTML=$(grep_form_by_id "$PAGE" 'fileupload') || return
+    FORM_ACTION=$(parse_form_action <<< "$FORM_HTML") || return
     FORM_SESS=$(parse_form_input_by_name_quiet 'sess_id' <<< "$PAGE")
+    log_debug $FORM_ACTION
 
-    # xupload.js
-    UPLOAD_ID=$(random dec 12) || return
-    PAGE=$(curl_with_log \
-        -F "upload_type=$FORM_UTYPE" \
+    log_debug "debug html '$FORM_HTML'"
+    JSON=$(curl_with_log \
         -F "sess_id=$FORM_SESS" \
-        -F "srv_tmp_url=$FORM_TMP_SRV" \
-        -F "file_1=@$FILE;type=application/octet-stream;filename=$DESTFILE" \
-        -F 'tos=1' \
-        -F "submit_btn=$FORM_BUTTON" \
-        "${FORM_ACTION%%\?*}?X-Progress-ID=${UPLOAD_ID}&upload_id=${UPLOAD_ID}&js_on=1&utype=${USER_TYPE}&upload_type=${FORM_UTYPE}" | break_html_lines) || return
+        -F "files[]=@$FILE;type=application/octet-stream;filename=$DESTFILE" \
+        "${FORM_ACTION}" | break_html_lines) || return
 
-
-    FORM_ACTION=$(parse_form_action <<< "$PAGE") || return
-    FORM_FN=$(parse_tag "name='fn'" textarea <<< "$PAGE") || return
-    FORM_ST=$(parse_tag "name='st'" textarea <<< "$PAGE") || return
-    FORM_OP=$(parse_tag "name='op'" textarea <<< "$PAGE") || return
-
-    if [ "$FORM_ST" = 'OK' ]; then
-        PAGE=$(curl -b 'lang=english' -d "fn=$FORM_FN" -d "st=$FORM_ST" \
-            -d "op=$FORM_OP" "$FORM_ACTION") || return
-
-        # Parse and output download + delete link
-        parse_attr 'Download File' 'value' <<< "$PAGE" || return
-        parse_attr 'killcode' 'value' <<< "$PAGE" || return
-        return 0
-    fi
-
-    log_error "Unexpected status: $FORM_ST"
-    return $ERR_FATAL
+    echo $JSON | parse_json url || return
+    echo $JSON | parse_json deleteUrl || return
 }
 
 # Probe a download URL

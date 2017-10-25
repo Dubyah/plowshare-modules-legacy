@@ -92,6 +92,10 @@ mediafire_extract_id() {
             ID=$(parse . '/download/\([[:alnum:]]\+\)' <<< "$URL") || return
             ;;
 
+        */file/*)
+            ID=$(parse . '/file/\([[:alnum:]]\+\)' <<< "$URL") || return
+            ;;
+
         */folder/*)
             ID=$(parse . '/folder/\([[:alnum:]]\+\)' <<< "$URL") || return
             ;;
@@ -225,13 +229,15 @@ mediafire_download() {
 
     # Only get site headers first to capture direct download links
     URL=$(curl --head "$BASE_URL/?$FILE_ID" | grep_http_header_location_quiet) || return
-
     case "$URL" in
         # no redirect, normal download
         '')
             URL="$BASE_URL/?$FILE_ID"
             ;;
         /download/*)
+            URL="$BASE_URL$URL"
+            ;;
+        /file/$FILE_ID/*)
             URL="$BASE_URL$URL"
             ;;
         http://*)
@@ -242,6 +248,10 @@ mediafire_download() {
         *errno=999)
             return $ERR_LINK_NEED_PERMISSIONS
             ;;
+       *errno=320\&origin=download)
+            return $ERR_LINK_DEAD
+            ;;
+
         *errno=320|*errno=378)
             return $ERR_LINK_DEAD
             ;;

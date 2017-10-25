@@ -1,6 +1,6 @@
 # Plowshare filejoker.net module
 # by idleloop <idleloop@yahoo.com>, v1.2, Feb 2016
-# Copyright (c) 2016 Plowshare team
+# Copyright (c) 2017 Plowshare team
 #
 # This file is part of Plowshare.
 #
@@ -169,6 +169,10 @@ filejoker_download() {
         return 0
     fi
 
+    if match '<div class="premium-download-expand">' "$PAGE"; then
+        return $ERR_LINK_NEED_PERMISSIONS
+    fi
+
     FORM_HTML=$(grep_form_by_name "$PAGE" 'F22') || return
     FORM_OP=$(parse_form_input_by_name 'op' <<< "$FORM_HTML") || return
     FORM_USR=$(parse_form_input_by_name_quiet 'usr_login' <<< "$FORM_HTML")
@@ -199,7 +203,7 @@ filejoker_download() {
         log_error 'Forced delay between downloads.'
         # Note: Always use decimal base instead of octal if there are leading zeros.
         echo $(( (( 10#$HOURS * 60 ) + 10#$MINS ) * 60 + 10#$SECS ))
-        return $ERR_LINK_TEMP_UNAVAILABLE    
+        return $ERR_LINK_TEMP_UNAVAILABLE
     fi
 
     if match "Free user can't download large files" "$PAGE" ; then
@@ -225,7 +229,7 @@ filejoker_download() {
     # Check for and handle CAPTCHA (if any).
     local PUBKEY RESP WORD CHALL ID CAPTCHA_DATA
 
-    if match 'recaptcha_image' "$FORM_HTML"; then
+    if match 'recaptcha_challenge_field' "$FORM_HTML"; then
         log_debug 'reCaptcha found'
         PUBKEY='6LetAu0SAAAAACCJkqZLvjNS4L7eSL8fGxr-Jzy2'
 
