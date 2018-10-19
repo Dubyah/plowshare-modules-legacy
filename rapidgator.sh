@@ -16,7 +16,7 @@
 # You should have received a copy of the GNU General Public License
 # along with Plowshare.  If not, see <http://www.gnu.org/licenses/>.
 
-MODULE_RAPIDGATOR_REGEXP_URL='http://\(www\.\)\?rapidgator\.net/'
+MODULE_RAPIDGATOR_REGEXP_URL='https\?://\(www\.\)\?rapidgator\.net/'
 
 MODULE_RAPIDGATOR_DOWNLOAD_OPTIONS="
 AUTH,a,auth,a=EMAIL:PASSWORD,User account"
@@ -34,7 +34,8 @@ MODULE_RAPIDGATOR_UPLOAD_REMOTE_SUPPORT=yes
 MODULE_RAPIDGATOR_LIST_OPTIONS=""
 MODULE_RAPIDGATOR_LIST_HAS_SUBFOLDERS=no
 
-MODULE_RAPIDGATOR_DELETE_OPTIONS=""
+MODULE_RAPIDGATOR_DELETE_OPTIONS="
+AUTH,a,auth,a=EMAIL:PASSWORD,User account"
 MODULE_RAPIDGATOR_PROBE_OPTIONS=""
 
 # Static function. Proceed with login (free)
@@ -45,7 +46,7 @@ MODULE_RAPIDGATOR_PROBE_OPTIONS=""
 rapidgator_login() {
     local -r AUTH=$1
     local -r COOKIE_FILE=$2
-    local -r BASE_URL=${3/#http/https}
+    local -r BASE_URL=$3
     local LOGIN_DATA HTML EMAIL TYPE STATUS
 
     LOGIN_DATA='LoginForm[email]=$USER&LoginForm[password]=$PASSWORD&LoginForm[rememberMe]=1'
@@ -236,8 +237,8 @@ rapidgator_redir_curl() {
 #         file name
 rapidgator_download() {
     local -r COOKIE_FILE=$1
-    local -r URL=$2
-    local -r BASE_URL='http://rapidgator.net'
+    local -r URL=${2/#http:/https:}
+    local -r BASE_URL='https://rapidgator.net'
     local -r CAPTCHA_URL='/download/captcha'
     local ACCOUNT HTML REDIR FILE_ID FILE_NAME SESSION_ID JSON STATE
     local WAIT_TIME FORM RESP CHALL CAPTCHA_DATA ID
@@ -415,7 +416,7 @@ rapidgator_download() {
 
     # Solve each type of captcha separately
     if [ -n "$FORM" ]; then
-        if match 'api\.solvemedia' "$FORM"; then
+        if match 'api\(-secure\)\?\.solvemedia' "$FORM"; then
             log_debug 'Solve Media CAPTCHA found'
 
             RESP=$(solvemedia_captcha_process 'oy3wKTaFP368dkJiGUqOVjBR2rOOR7GR') || return
@@ -472,7 +473,7 @@ rapidgator_upload() {
     local -r COOKIE_FILE=$1
     local -r FILE=$2
     local -r DEST_FILE=$3
-    local -r BASE_URL='http://rapidgator.net'
+    local -r BASE_URL='https://rapidgator.net'
     local HTML URL LINK DEL_LINK
 
     # Sanity checks
@@ -641,8 +642,8 @@ rapidgator_upload() {
         fi
 
         # Scrape URLs from site (upload server changes each time)
-        UP_URL=$(parse 'var form_url' '"\(.\+\)";' <<< "$HTML") || return
-        PROG_URL=$(parse 'var progress_url_srv' '"\(.\+\)";' <<< "$HTML") || return
+        UP_URL=$(parse 'var form_url' 'setProtocol("\(.\+\)");' <<< "$HTML") || return
+        PROG_URL=$(parse 'var progress_url_srv' 'setProtocol("\(.\+\)");' <<< "$HTML") || return
 
         log_debug "Upload URL: '$UP_URL'"
         log_debug "Progress URL: '$PROG_URL'"
@@ -688,9 +689,15 @@ rapidgator_upload() {
 # $2: rapidgator (delete) link
 rapidgator_delete() {
     local -r COOKIE_FILE=$1
-    local -r URL=$2
-    local -r BASE_URL='http://rapidgator.net'
+    local -r URL=${2/#http:/https:}
+    local -r BASE_URL='https://rapidgator.net'
     local HTML ID UP_ID
+
+    # Sanity checks
+    [ -n "$AUTH" ] || return $ERR_LINK_NEED_PERMISSIONS
+
+    # Login (don't care for account type)
+    rapidgator_login "$AUTH" "$COOKIE_FILE" "$BASE_URL" > /dev/null || return
 
     ID=$(parse . '/id/\([^/]\+\)/up_id/' <<< "$URL") || return
     UP_ID=$(parse . '/up_id/\(.\+\)$' <<< "$URL") || return
@@ -736,7 +743,7 @@ rapidgator_list() {
     NAMES=$(parse_all . 'alt=..>[[:space:]]*\([^<]*\)' <<< "$PAGE")
     LINKS=$(parse_all_attr href <<< "$PAGE")
 
-    list_submit "$LINKS" "$NAMES" 'http://rapidgator.net' || return
+    list_submit "$LINKS" "$NAMES" 'https://rapidgator.net' || return
 }
 
 # Probe a download URL
@@ -745,7 +752,7 @@ rapidgator_list() {
 # $3: requested capability list
 # stdout: 1 capability per line
 rapidgator_probe() {
-    local -r URL=$2
+    local -r URL=${2/#http:/https:}
     local -r REQ_IN=$3
     local PAGE REDIR REQ_OUT FILE_NAME FILE_SIZE
 
